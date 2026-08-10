@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>随机菜单转盘</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #ffffff;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-family: "PingFang SC", "Microsoft YaHei", "Source Han Sans CN", sans-serif;
+    padding: 40px 20px;
+  }
+  .container {
+    position: relative;
+    width: 880px;
+    height: 880px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #wheel {
+    cursor: pointer;
+  }
+  .result-label {
+    margin-top: 24px;
+    font-size: 15px;
+    color: #999;
+    letter-spacing: 2px;
+    min-height: 22px;
+    text-align: center;
+  }
+  .result-label .name {
+    color: #111;
+    font-size: 20px;
+    font-weight: 600;
+  }
+  .actions {
+    margin-top: 18px;
+    display: flex;
+    gap: 16px;
+  }
+  .btn {
+    padding: 10px 28px;
+    border: 1px solid #1a1a1a;
+    background: #fff;
+    color: #1a1a1a;
+    font-size: 14px;
+    letter-spacing: 1px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.2s;
+  }
+  .btn:hover {
+    background: #1a1a1a;
+    color: #fff;
+  }
+  .btn.primary {
+    background: #1a1a1a;
+    color: #fff;
+  }
+  .btn.primary:hover {
+    background: #333;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <canvas id="wheel" width="880" height="880"></canvas>
+</div>
+<div class="result-label" id="result">点击中心 GO 开始随机选择</div>
+<div class="actions">
+  <button class="btn primary" onclick="spin()">开始旋转</button>
+  <button class="btn" onclick="downloadImage()">下载转盘图</button>
+</div>
+<script>
+// ===== 菜单数据 =====
+const MENU = [
+  "香烤鸡胸肉健康餐 Bowl",
+  "招牌牛鸡双拼鲜疏能量碗 Bowl",
+  "秘制精烤全腿超模能量碗 Bowl",
+  "菠萝炙烤牛排轻食能量碗 Bowl",
+  "炙烤青花鱼鲜疏能量碗 Bowl",
+  "薄盐鲷鱼鲜疏能量碗 Bowl",
+  "Deep薄盐鲷鱼烤时蔬健康碗",
+  "招牌双拼 炙烤牛鸡烤时蔬健康碗",
+  "O-mega3青花鱼烤时蔬健康碗",
+  "Style秘制大全腿烤时蔬健康碗",
+  "招牌三拼 海陆空牛鸡大虾烤时蔬碗",
+  "蔬三时香煎鸡胸能量谷物饭",
+  "蔬三时藤椒鸡腿肉能量谷物饭",
+  "蔬三时混蔬藤椒鸡腿肉能量谷物饭",
+  "招牌 鸡胸鸡腿肉双拼健康能量碗",
+  "香烤鸡胸荞麦面 Noodle",
+  "蔬三时招牌烤鸡胸轻疏荞麦面",
+  "招牌时蔬双拼荞麦面 Noodle",
+  "招牌 烤鸡胸肉轻疏荞麦面",
+  "鲜疏菠菜卷+小食饮品套餐 Rolls",
+  "蔬三时菠菜鸡肉卷+谷物酸奶杯",
+  "嫩煎香料鸡肉芒果沙拉 Salad",
+  "牛肉鸡胸肉双拼沙拉 Salad",
+  "菠萝烤牛排轻食沙拉 Salad",
+  "炙烤大虾牛油果芒果沙拉 Salad",
+  "全麦香煎土豆泥鸡胸三明治 Sandwich",
+  "全麦炙烤土豆泥牛排三明治 Sandwich",
+  "星厨黑椒风味意面 蛋白质自选"
+];
+
+const N = MENU.length;
+const canvas = document.getElementById("wheel");
+const ctx = canvas.getContext("2d");
+const DPR = window.devicePixelRatio || 2;
+const SIZE = 880;
+canvas.width = SIZE * DPR;
+canvas.height = SIZE * DPR;
+canvas.style.width = SIZE + "px";
+canvas.style.height = SIZE + "px";
+ctx.scale(DPR, DPR);
+
+const cx = 440, cy = 440;
+const R_OUTER = 415;
+const R_INNER = 62;
+const SECTOR_ANGLE = (Math.PI * 2) / N;
+// 扇区起始角度：让第一个扇区中心在正上方（指针位置）
+const START_OFFSET = -Math.PI / 2 - SECTOR_ANGLE / 2;
+
+let rotation = 0;
+let spinning = false;
+let selectedIndex = -1;
+
+// ===== 工具：文字换行（优先在空格/符号处断行）=====
+function wrapText(text, maxChars) {
+  if (text.length <= maxChars) return [text];
+  // 优先找空格、括号、加号等自然断点
+  let breakPos = -1;
+  for (let i = maxChars; i >= 2; i--) {
+    if (/[\s（）()「」\+]/.test(text[i - 1])) { breakPos = i; break; }
+  }
+  if (breakPos === -1) {
+    // 其次找中英文交界处
+    for (let i = maxChars; i >= 2; i--) {
+      const prev = /[\u4e00-\u9fa5]/.test(text[i - 1]);
+      const curr = /[A-Za-z0-9]/.test(text[i]);
+      if (prev !== curr) { breakPos = i; break; }
+    }
+  }
+  if (breakPos === -1) breakPos = maxChars;
+  return [text.slice(0, breakPos).trim(), text.slice(breakPos).trim()];
+}
+
+// ===== 绘制转盘 =====
+function draw() {
+  ctx.clearRect(0, 0, SIZE, SIZE);
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(rotation);
+
+  // 绘制每个扇区
+  for (let i = 0; i < N; i++) {
+    const a0 = START_OFFSET + i * SECTOR_ANGLE;
+    const a1 = a0 + SECTOR_ANGLE;
+
+    // 扇区底色：每隔一个用极浅灰
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.arc(0, 0, R_OUTER, a0, a1);
+    ctx.closePath();
+    ctx.fillStyle = (i % 2 === 0) ? "#ffffff" : "#f7f7f7";
+    ctx.fill();
+
+    // 极细分隔线
+    ctx.strokeStyle = "#1a1a1a";
+    ctx.lineWidth = 0.6;
+    ctx.stroke();
+  }
+
+  // 外圆边框
+  ctx.beginPath();
+  ctx.arc(0, 0, R_OUTER, 0, Math.PI * 2);
+  ctx.strokeStyle = "#1a1a1a";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // 外圈装饰双线（喜茶风格）
+  ctx.beginPath();
+  ctx.arc(0, 0, R_OUTER - 8, 0, Math.PI * 2);
+  ctx.strokeStyle = "#1a1a1a";
+  ctx.lineWidth = 0.5;
+  ctx.stroke();
+
+  // 内圈装饰线（中心按钮外围）
+  ctx.beginPath();
+  ctx.arc(0, 0, R_INNER + 10, 0, Math.PI * 2);
+  ctx.strokeStyle = "#cccccc";
+  ctx.lineWidth = 0.5;
+  ctx.stroke();
+
+  // 绘制每个扇区的文字
+  for (let i = 0; i < N; i++) {
+    const aMid = START_OFFSET + i * SECTOR_ANGLE + SECTOR_ANGLE / 2;
+    drawSectorText(MENU[i], aMid, i);
+  }
+
+  ctx.restore();
+
+  // 绘制中心黑色圆形按钮（不随转盘旋转）
+  drawCenterButton();
+
+  // 绘制顶部指针（不随转盘旋转）
+  drawPointer();
+}
+
+function drawSectorText(text, angle, index) {
+  ctx.save();
+  ctx.rotate(angle);
+
+  // 根据文字长度自适应字号与换行
+  const len = text.length;
+  let fontSize, lines, textStartX;
+
+  if (len <= 8) {
+    fontSize = 14;
+    lines = [text];
+    textStartX = R_INNER + 22;
+  } else if (len <= 11) {
+    fontSize = 12;
+    lines = [text];
+    textStartX = R_INNER + 22;
+  } else {
+    // 长文字：两行，小字号，起始半径外移以确保弧宽足够
+    fontSize = 10.5;
+    lines = wrapText(text, Math.ceil(len / 2));
+    if (lines.length > 2) lines = [lines[0], lines.slice(1).join("")];
+    textStartX = R_INNER + 48;
+  }
+
+  const maxWidth = R_OUTER - textStartX - 16;
+  const lineH = fontSize + 3.5;
+  const startY = -(lines.length - 1) * lineH / 2;
+
+  ctx.fillStyle = "#111111";
+  ctx.font = '600 ' + fontSize + 'px "PingFang SC", "Microsoft YaHei", "Source Han Sans CN", sans-serif';
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+
+  for (let j = 0; j < lines.length; j++) {
+    ctx.fillText(lines[j], textStartX, startY + j * lineH, maxWidth);
+  }
+  ctx.restore();
+}
+
+function drawCenterButton() {
+  ctx.save();
+  ctx.translate(cx, cy);
+  // 黑色按钮
+  ctx.beginPath();
+  ctx.arc(0, 0, 56, 0, Math.PI * 2);
+  ctx.fillStyle = "#111111";
+  ctx.fill();
+  // 内圈细描边
+  ctx.beginPath();
+  ctx.arc(0, 0, 52, 0, Math.PI * 2);
+  ctx.strokeStyle = "#2a2a2a";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  // GO 文字
+  ctx.fillStyle = "#ffffff";
+  ctx.font = '700 26px "PingFang SC", "Helvetica Neue", Arial, sans-serif';
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("GO", 0, 1);
+  ctx.restore();
+}
+
+function drawPointer() {
+  // 顶部黑色实心三角指针，指向圆心
+  ctx.save();
+  ctx.translate(cx, cy - R_OUTER + 4);
+  ctx.beginPath();
+  ctx.moveTo(0, 30);            // 底部尖点（指向圆心方向）
+  ctx.lineTo(-16, -8);          // 左上
+  ctx.lineTo(16, -8);           // 右上
+  ctx.closePath();
+  ctx.fillStyle = "#111111";
+  ctx.fill();
+  // 指针顶部小圆点装饰
+  ctx.beginPath();
+  ctx.arc(0, -8, 3.5, 0, Math.PI * 2);
+  ctx.fillStyle = "#111111";
+  ctx.fill();
+  ctx.restore();
+}
+
+// ===== 旋转逻辑 =====
+function spin() {
+  if (spinning) return;
+  spinning = true;
+  selectedIndex = -1;
+  document.getElementById("result").innerHTML = "旋转中...";
+
+  const minTurns = 5;
+  const extraTurns = Math.random() * 3 + 2;
+  const totalRotation = (minTurns + extraTurns) * Math.PI * 2;
+  const startRot = rotation;
+  const duration = 5200;
+  const startTime = performance.now();
+
+  function easeOut(t) {
+    return 1 - Math.pow(1 - t, 4);
+  }
+
+  function animate(now) {
+    const elapsed = now - startTime;
+    const t = Math.min(elapsed / duration, 1);
+    const eased = easeOut(t);
+    rotation = startRot + totalRotation * eased;
+    draw();
+    if (t < 1) {
+      requestAnimationFrame(animate);
+    } else {
+      spinning = false;
+      // 计算选中扇区
+      // 指针在正上方（角度 -PI/2），扇区 i 中心角度 = START_OFFSET + i*SECTOR_ANGLE + SECTOR_ANGLE/2
+      // 找出当前指针对应的扇区
+      let normRot = rotation % (Math.PI * 2);
+      if (normRot < 0) normRot += Math.PI * 2;
+      // 指针世界角度 = -PI/2；扇区世界角度 = (START_OFFSET + i*SA + SA/2) + rotation
+      // 我们需要找到 i 使得指针落在扇区内
+      for (let i = 0; i < N; i++) {
+        let aMid = START_OFFSET + i * SECTOR_ANGLE + SECTOR_ANGLE / 2 + normRot;
+        // 归一化到 -PI/2 附近
+        let diff = aMid - (-Math.PI / 2);
+        diff = ((diff + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+        if (Math.abs(diff) < SECTOR_ANGLE / 2) {
+          selectedIndex = i;
+          break;
+        }
+      }
+      const name = MENU[selectedIndex] || MENU[0];
+      document.getElementById("result").innerHTML =
+        '今日推荐 <span class="name">' + name + "</span>";
+    }
+  }
+  requestAnimationFrame(animate);
+}
+
+// 点击中心区域触发
+canvas.addEventListener("click", function (e) {
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left - cx;
+  const y = e.clientY - rect.top - cy;
+  if (Math.sqrt(x * x + y * y) < 58) {
+    spin();
+  }
+});
+
+// 下载高清转盘图
+function downloadImage() {
+  const link = document.createElement("a");
+  link.download = "随机菜单转盘.png";
+  link.href = canvas.toDataURL("image/png");
+  link.click();
+}
+
+// 初始绘制
+draw();
+</script>
+</body>
+</html>
